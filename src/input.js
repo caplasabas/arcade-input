@@ -88,8 +88,10 @@ function startUsbEncoder() {
     joystick = new Joystick(0, 3500, 350)
 
     console.log('[JOYSTICK] Listening on /dev/input/js0')
+    console.log(joystick)
 
     joystick.on('button', (index, value) => {
+      console.log('[JOYSTICK]', index, value)
       // value: 1 = pressed, 0 = released
       if (value !== 1) return
 
