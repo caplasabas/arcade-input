@@ -24,8 +24,9 @@ const JOYSTICK_BUTTON_MAP = {
   1: 'BET_DOWN',
   2: 'BET_UP',
   3: 'AUTO',
+  4: 'COIN',
   8: 'MENU',
-  9: 'START'
+  9: 'START',
 }
 
 // ============================
@@ -48,12 +49,12 @@ Inputs:
 
 input map:
 0 = spin
-1 = bet up
-2 = bet down
-3 = start
-4 = auto
-5 = menu
-6 = coin
+1 = bet down
+2 = bet up
+3 = auto
+4 = coin
+8 = menu
+9 = coin
 
 Ctrl+C to exit
 `)
@@ -88,10 +89,8 @@ function startUsbEncoder() {
     joystick = new Joystick(0, 3500, 350)
 
     console.log('[JOYSTICK] Listening on /dev/input/js0')
-    console.log(joystick)
 
     joystick.on('button', (index, value) => {
-      console.log('[JOYSTICK]', index, value)
       // value: 1 = pressed, 0 = released
       if (index.value !== 1) return
 
