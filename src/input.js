@@ -130,12 +130,13 @@ function startUsbEncoder() {
     // Typical zero-delay encoder format:
     // data[0] = buttons bitmask (varies per model)
     const buttons = data[0]
+    if (data[0] === 0x7F) return
     console.log('buttons',buttons)
     for (let i = 0; i < 8; i++) {
       const pressed = (buttons & (1 << i)) !== 0
       const wasPressed = lastButtonState[i]
 
-      if (pressed) {
+      if (pressed && !wasPressed) {
         const action = GAMEPAD_BUTTON_MAP[i]
         if (action) {
           console.log('[HID]', i, action)
