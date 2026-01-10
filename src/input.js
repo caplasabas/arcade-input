@@ -93,9 +93,9 @@ function startUsbEncoder() {
     joystick.on('button', (index, value) => {
       console.log('[JOYSTICK]', index, value)
       // value: 1 = pressed, 0 = released
-      if (value !== 1) return
+      if (index.value !== 1) return
 
-      const action = JOYSTICK_BUTTON_MAP[index]
+      const action = JOYSTICK_BUTTON_MAP[index.value]
       if (!action) return
 
       console.log('[JOYSTICK]', index, action)
