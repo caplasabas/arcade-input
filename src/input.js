@@ -17,17 +17,6 @@ import Joystick from 'joystick'
 
 const API = 'http://localhost:5173/input'
 
-// Keyboard map (DEV ONLY)
-const KEY_MAP = {
-  s: 'SPIN',
-  u: 'BET_UP',
-  d: 'BET_DOWN',
-  t: 'START',
-  a: 'AUTO',
-  m: 'MENU',
-  c: 'COIN'
-}
-
 // Joystick button → action map
 // Matches jstest button indices
 const JOYSTICK_BUTTON_MAP = {
@@ -56,16 +45,15 @@ ARCADE INPUT SERVICE
 --------------------
 Inputs:
 - USB Encoder (/dev/input/js0)
-- Keyboard (DEV fallback)
 
-Keyboard map:
-s = spin
-u = bet up
-d = bet down
-t = start
-a = auto
-m = menu
-c = coin
+input map:
+0 = spin
+1 = bet up
+2 = bet down
+3 = start
+4 = auto
+5 = menu
+6 = coin
 
 Ctrl+C to exit
 `)
@@ -90,37 +78,6 @@ async function dispatch(action) {
   }
 }
 
-// ============================
-// KEYBOARD INPUT (DEV MODE)
-// ============================
-
-function startKeyboardInput() {
-  if (!process.stdin.isTTY) {
-    console.warn('[KEYBOARD] stdin is not TTY, keyboard input disabled')
-    return
-  }
-
-  rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout
-  })
-
-  process.stdin.setRawMode(true)
-
-  process.stdin.on('data', (key) => {
-    const k = key.toString()
-
-    if (k === '\u0003') {
-      shutdown()
-      return
-    }
-
-    const action = KEY_MAP[k]
-    if (action) dispatch(action)
-  })
-
-  console.log('[KEYBOARD] Enabled')
-}
 
 // ============================
 // USB ENCODER (JOYSTICK)
@@ -187,4 +144,3 @@ process.on('uncaughtException', err => {
 // ============================
 
 startUsbEncoder()
-startKeyboardInput()
