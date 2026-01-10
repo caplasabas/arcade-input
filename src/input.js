@@ -95,10 +95,10 @@ function startUsbEncoder() {
       // value: 1 = pressed, 0 = released
       if (index.value !== 1) return
 
-      const action = JOYSTICK_BUTTON_MAP[index.value]
+      const action = JOYSTICK_BUTTON_MAP[index.id]
       if (!action) return
 
-      console.log('[JOYSTICK]', index, action)
+      console.log('[JOYSTICK]', index.id, action)
       dispatch(action)
     })
 
