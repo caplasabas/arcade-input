@@ -25,6 +25,7 @@ const JOYSTICK_BUTTON_MAP = {
   2: 'BET_UP',
   3: 'AUTO',
   4: 'COIN',
+  5: 'WITHDRAW',
   8: 'MENU',
   9: 'START',
 }
