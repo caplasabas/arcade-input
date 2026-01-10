@@ -3,14 +3,14 @@
  * --------------------
  * Supports:
  * - Keyboard input (dev / fallback)
- * - USB arcade encoder (HID gamepad)
+ * - USB arcade encoder via Linux joystick (/dev/input/js0)
  * - HTTP dispatch to SuperAce
  * - GPIO scaffold (Pi, optional)
  */
 
 import readline from 'readline'
 import fetch from 'node-fetch'
-import HID from 'node-hid'
+import Joystick from 'joystick'
 
 // ============================
 // CONFIG
@@ -29,14 +29,15 @@ const KEY_MAP = {
   c: 'COIN'
 }
 
-// USB encoder button map (adjust after logging)
-const GAMEPAD_BUTTON_MAP = {
-  0: 'SPIN',      // A
-  1: 'BET_DOWN', // B
-  2: 'BET_UP',   // X
-  3: 'AUTO',     // Y
-  8: 'MENU',     // SELECT
-  9: 'START'     // START
+// Joystick button → action map
+// Matches jstest button numbers
+const JOYSTICK_BUTTON_MAP = {
+  0: 'SPIN',       // Button 1
+  1: 'BET_DOWN',  // Button 2
+  2: 'BET_UP',    // Button 3
+  3: 'AUTO',      // Button 4
+  8: 'MENU',      // SELECT
+  9: 'START'      // START
 }
 
 // ============================
@@ -48,7 +49,7 @@ ARCADE INPUT SERVICE
 --------------------
 Modes:
 - Keyboard (DEV)
-- USB Encoder (HID)
+- USB Encoder (Joystick)
 
 Keyboard:
 s = spin
@@ -81,7 +82,7 @@ async function send(action) {
 }
 
 // ============================
-// KEYBOARD INPUT
+// KEYBOARD INPUT (DEV)
 // ============================
 
 function startKeyboardInput() {
@@ -103,54 +104,32 @@ function startKeyboardInput() {
 }
 
 // ============================
-// USB ENCODER (HID GAMEPAD)
+// USB ENCODER (JOYSTICK)
 // ============================
 
-let hidDevice = null
-let lastButtonState = {}
+let joystick = null
 
 function startUsbEncoder() {
-  const devices = HID.devices()
+  try {
+    // js0 = first encoder
+    joystick = new Joystick(0, 3500, 350)
 
-  const gamepad = devices.find(d =>
-    d.usagePage === 0x01 &&
-    (d.usage === 0x04 || d.usage === 0x05)
-  )
+    console.log('[JOYSTICK] Listening on /dev/input/js0')
 
-  if (!gamepad) {
-    console.warn('[HID] No USB gamepad encoder found')
-    return
+    joystick.on('button', (index, value) => {
+      // value: 1 = press, 0 = release
+      if (value !== 1) return
+
+      const action = JOYSTICK_BUTTON_MAP[index]
+      if (!action) return
+
+      console.log('[JOYSTICK]', index, action)
+      send(action)
+    })
+
+  } catch (err) {
+    console.warn('[JOYSTICK] Not available:', err.message)
   }
-
-  console.log('[HID] Using device:', gamepad.product)
-
-  hidDevice = new HID.HID(gamepad.path)
-
-  hidDevice.on('data', (data) => {
-    // Typical zero-delay encoder format:
-    // data[0] = buttons bitmask (varies per model)
-    const buttons = data[0]
-    if (data[0] === 0x7F) return
-    console.log('buttons',buttons)
-    for (let i = 0; i < 8; i++) {
-      const pressed = (buttons & (1 << i)) !== 0
-      const wasPressed = lastButtonState[i]
-
-      if (pressed && !wasPressed) {
-        const action = GAMEPAD_BUTTON_MAP[i]
-        if (action) {
-          console.log('[HID]', i, action)
-          send(action)
-        }
-      }
-
-      lastButtonState[i] = pressed
-    }
-  })
-
-  hidDevice.on('error', err => {
-    console.error('[HID ERROR]', err.message)
-  })
 }
 
 // ============================
@@ -190,11 +169,9 @@ function startUsbEncoder() {
 function shutdown() {
   console.log('\nShutting down input service...')
 
-  if (hidDevice) {
-    hidDevice.close()
+  if (joystick) {
+    joystick.removeAllListeners()
   }
-
-  // gpioHandles.forEach(gpio => gpio.unexport())
 
   process.exit(0)
 }
