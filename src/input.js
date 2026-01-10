@@ -5,7 +5,6 @@
  * - Keyboard input (dev / fallback)
  * - USB arcade encoder via Linux joystick (/dev/input/js0)
  * - HTTP dispatch to SuperAce
- * - GPIO scaffold (Pi, optional)
  */
 
 import readline from 'readline'
@@ -18,7 +17,7 @@ import Joystick from 'joystick'
 
 const API = 'http://localhost:5173/input'
 
-// Keyboard map (DEV)
+// Keyboard map (DEV ONLY)
 const KEY_MAP = {
   s: 'SPIN',
   u: 'BET_UP',
@@ -30,15 +29,23 @@ const KEY_MAP = {
 }
 
 // Joystick button → action map
-// Matches jstest button numbers
+// Matches jstest button indices
 const JOYSTICK_BUTTON_MAP = {
-  0: 'SPIN',       // Button 1
-  1: 'BET_DOWN',  // Button 2
-  2: 'BET_UP',    // Button 3
-  3: 'AUTO',      // Button 4
-  8: 'MENU',      // SELECT
-  9: 'START'      // START
+  0: 'SPIN',
+  1: 'BET_DOWN',
+  2: 'BET_UP',
+  3: 'AUTO',
+  8: 'MENU',
+  9: 'START'
 }
+
+// ============================
+// STATE
+// ============================
+
+let joystick = null
+let rl = null
+let shuttingDown = false
 
 // ============================
 // BOOT MESSAGE
@@ -47,11 +54,11 @@ const JOYSTICK_BUTTON_MAP = {
 console.log(`
 ARCADE INPUT SERVICE
 --------------------
-Modes:
-- Keyboard (DEV)
-- USB Encoder (Joystick)
+Inputs:
+- USB Encoder (/dev/input/js0)
+- Keyboard (DEV fallback)
 
-Keyboard:
+Keyboard map:
 s = spin
 u = bet up
 d = bet down
@@ -67,7 +74,9 @@ Ctrl+C to exit
 // DISPATCH
 // ============================
 
-async function send(action) {
+async function dispatch(action) {
+  if (shuttingDown) return
+
   try {
     console.log('[SEND]', action)
 
@@ -82,11 +91,16 @@ async function send(action) {
 }
 
 // ============================
-// KEYBOARD INPUT (DEV)
+// KEYBOARD INPUT (DEV MODE)
 // ============================
 
 function startKeyboardInput() {
-  readline.createInterface({
+  if (!process.stdin.isTTY) {
+    console.warn('[KEYBOARD] stdin is not TTY, keyboard input disabled')
+    return
+  }
+
+  rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
   })
@@ -96,93 +110,81 @@ function startKeyboardInput() {
   process.stdin.on('data', (key) => {
     const k = key.toString()
 
-    if (k === '\u0003') shutdown()
+    if (k === '\u0003') {
+      shutdown()
+      return
+    }
 
     const action = KEY_MAP[k]
-    if (action) send(action)
+    if (action) dispatch(action)
   })
+
+  console.log('[KEYBOARD] Enabled')
 }
 
 // ============================
 // USB ENCODER (JOYSTICK)
 // ============================
 
-let joystick = null
-
 function startUsbEncoder() {
   try {
-    // js0 = first encoder
     joystick = new Joystick(0, 3500, 350)
 
     console.log('[JOYSTICK] Listening on /dev/input/js0')
 
     joystick.on('button', (index, value) => {
-      // value: 1 = press, 0 = release
+      // value: 1 = pressed, 0 = released
       if (value !== 1) return
 
       const action = JOYSTICK_BUTTON_MAP[index]
       if (!action) return
 
       console.log('[JOYSTICK]', index, action)
-      send(action)
+      dispatch(action)
     })
 
   } catch (err) {
-    console.warn('[JOYSTICK] Not available:', err.message)
+    console.error('[JOYSTICK] Failed to initialize:', err.message)
   }
 }
-
-// ============================
-// GPIO INPUT (OPTIONAL, PI)
-// ============================
-//
-// import { Gpio } from 'onoff'
-//
-// const GPIO_INPUTS = {
-//   SPIN: 17,
-//   BET_UP: 18,
-//   BET_DOWN: 27,
-//   START: 22,
-//   MENU: 23,
-//   COIN: 24
-// }
-//
-// const gpioHandles = []
-//
-// function startGpioInput() {
-//   for (const [action, pin] of Object.entries(GPIO_INPUTS)) {
-//     const gpio = new Gpio(pin, 'in', 'falling', { debounceTimeout: 10 })
-//
-//     gpio.watch(() => {
-//       console.log('[GPIO]', action)
-//       send(action)
-//     })
-//
-//     gpioHandles.push(gpio)
-//   }
-// }
 
 // ============================
 // CLEAN SHUTDOWN
 // ============================
 
 function shutdown() {
+  if (shuttingDown) return
+  shuttingDown = true
+
   console.log('\nShutting down input service...')
 
-  if (joystick) {
-    joystick.removeAllListeners()
-  }
+  try {
+    if (joystick) {
+      joystick.removeAllListeners()
+      joystick = null
+    }
 
-  process.exit(0)
+    if (rl) {
+      rl.close()
+      rl = null
+    }
+  } catch (err) {
+    console.error('[SHUTDOWN ERROR]', err.message)
+  } finally {
+    process.exit(0)
+  }
 }
 
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
+process.on('uncaughtException', err => {
+  console.error('[FATAL]', err)
+  shutdown()
+})
 
 // ============================
 // STARTUP
 // ============================
 
-startKeyboardInput()
 startUsbEncoder()
-// startGpioInput() // enable only on Pi with GPIO
+startKeyboardInput()
