@@ -127,7 +127,6 @@ function startUsbEncoder() {
   hidDevice = new HID.HID(gamepad.path)
 
   hidDevice.on('data', (data) => {
-    console.log([...data])
     // Typical zero-delay encoder format:
     // data[0] = buttons bitmask (varies per model)
     const buttons = data[0]
