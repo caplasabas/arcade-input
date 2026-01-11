@@ -26,6 +26,7 @@ const JOYSTICK_BUTTON_MAP = {
   3: 'AUTO',
   4: 'COIN',
   5: 'WITHDRAW',
+  6: 'TURBO',
   8: 'MENU',
   9: 'START',
 }
@@ -54,6 +55,8 @@ input map:
 2 = bet up
 3 = auto
 4 = coin
+5 = withdraw
+6 = turbo
 8 = menu
 9 = coin
 
