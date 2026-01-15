@@ -1,15 +1,6 @@
-/**
- * Arcade Input Service
- * --------------------
- * Supports:
- * - Keyboard input (dev / fallback)
- * - USB arcade encoder via Linux joystick (/dev/input/js0)
- * - HTTP dispatch to SuperAce
- */
-
-import readline from 'readline'
 import fetch from 'node-fetch'
 import Joystick from 'joystick'
+import { Gpio } from 'onoff'
 
 // ============================
 // CONFIG
@@ -17,8 +8,14 @@ import Joystick from 'joystick'
 
 const API = 'http://localhost:5173/input'
 
+// GPIO pins (BCM numbering)
+const HOPPER_PAY_PIN = 17
+const HOPPER_COUNT_PIN = 27
+
+// Hopper safety
+const HOPPER_TIMEOUT_MS = 15000  // max run per payout
+
 // Joystick button → action map
-// Matches jstest button indices
 const JOYSTICK_BUTTON_MAP = {
   0: 'SPIN',
   1: 'BET_DOWN',
@@ -31,83 +28,157 @@ const JOYSTICK_BUTTON_MAP = {
   9: 'START',
 }
 
+// Coin pulse aggregation
+const COIN_PULSE_WINDOW_MS = 400
+const MIN_COIN_INTERVAL_MS = 700
+const MAX_PULSES_PER_COIN = 12
+
+const COIN_PULSE_MAP = {
+  1: 1,
+  5: 5,
+  10: 10,
+}
+
 // ============================
 // STATE
 // ============================
 
 let joystick = null
-let rl = null
 let shuttingDown = false
 
-// ============================
-// BOOT MESSAGE
-// ============================
+let coinPulseCount = 0
+let coinPulseTimer = null
+let lastCoinTime = 0
 
-console.log(`
-ARCADE INPUT SERVICE
---------------------
-Inputs:
-- USB Encoder (/dev/input/js0)
+// Hopper state
+let hopperPay = new Gpio(HOPPER_PAY_PIN, 'out')
+let hopperCount = new Gpio(HOPPER_COUNT_PIN, 'in', 'falling', {
+  debounceTimeout: 5
+})
 
-input map:
-0 = spin
-1 = bet down
-2 = bet up
-3 = auto
-4 = coin
-5 = withdraw
-6 = turbo
-8 = menu
-9 = coin
-
-Ctrl+C to exit
-`)
+let hopperActive = false
+let hopperTarget = 0
+let hopperDispensed = 0
+let hopperTimeout = null
 
 // ============================
 // DISPATCH
 // ============================
 
-async function dispatch(action) {
+async function dispatch(payload) {
   if (shuttingDown) return
 
-  try {
-    console.log('[SEND]', action)
-
-    await fetch(API, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action })
-    })
-  } catch (err) {
-    console.error('[ERROR] Dispatch failed:', err.message)
-  }
+  await fetch(API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
 }
 
+// ============================
+// COIN INPUT (ACCEPTOR)
+// ============================
+
+function handleCoinPulse() {
+  coinPulseCount++
+
+  if (coinPulseTimer) return
+
+  coinPulseTimer = setTimeout(() => {
+    const pulses = coinPulseCount
+    coinPulseCount = 0
+    coinPulseTimer = null
+
+    const now = Date.now()
+
+    if (pulses > MAX_PULSES_PER_COIN) return
+    if (now - lastCoinTime < MIN_COIN_INTERVAL_MS) return
+
+    const credits = COIN_PULSE_MAP[pulses]
+    if (!credits) return
+
+    lastCoinTime = now
+
+    dispatch({
+      type: 'COIN',
+      credits
+    })
+  }, COIN_PULSE_WINDOW_MS)
+}
 
 // ============================
-// USB ENCODER (JOYSTICK)
+// HOPPER CONTROL
+// ============================
+
+function startHopper(amount) {
+  if (hopperActive) return
+
+  hopperActive = true
+  hopperTarget = amount
+  hopperDispensed = 0
+
+  console.log('[HOPPER] Start payout:', amount)
+
+  hopperPay.writeSync(1)
+
+  hopperTimeout = setTimeout(() => {
+    console.error('[HOPPER] Timeout / jam detected')
+    stopHopper()
+  }, HOPPER_TIMEOUT_MS)
+}
+
+function stopHopper() {
+  hopperPay.writeSync(0)
+  hopperActive = false
+
+  if (hopperTimeout) {
+    clearTimeout(hopperTimeout)
+    hopperTimeout = null
+  }
+
+  console.log('[HOPPER] Stop payout', hopperDispensed)
+
+  dispatch({
+    type: 'WITHDRAW_COMPLETE',
+    dispensed: hopperDispensed
+  })
+}
+
+// Count coins coming out
+hopperCount.watch(() => {
+  if (!hopperActive) return
+
+  hopperDispensed++
+  console.log('[HOPPER] Coin out', hopperDispensed)
+
+  if (hopperDispensed >= hopperTarget) {
+    stopHopper()
+  }
+})
+
+// ============================
+// USB ENCODER
 // ============================
 
 function startUsbEncoder() {
-  try {
-    joystick = new Joystick(0, 3500, 350)
+  joystick = new Joystick(0, 3500, 350)
 
-    console.log('[JOYSTICK] Listening on /dev/input/js0')
+  joystick.on('button', (event) => {
+    if (event.value !== 1) return
 
-    joystick.on('button', (index, value) => {
-      // value: 1 = pressed, 0 = released
-      if (index.value !== 1) return
+    const action = JOYSTICK_BUTTON_MAP[event.number]
+    if (!action) return
 
-      const action = JOYSTICK_BUTTON_MAP[index.number]
-      if (!action) return
+    if (action === 'COIN') {
+      handleCoinPulse()
+      return
+    }
 
-      console.log('[JOYSTICK]', index.number, action)
-      dispatch(action)
+    dispatch({
+      type: 'ACTION',
+      action
     })
-
-  } catch (err) {
-    console.error('[JOYSTICK] Failed to initialize:', err.message)
-  }
+  })
 }
 
 // ============================
@@ -115,37 +186,21 @@ function startUsbEncoder() {
 // ============================
 
 function shutdown() {
-  if (shuttingDown) return
   shuttingDown = true
 
-  console.log('\nShutting down input service...')
+  hopperPay.writeSync(0)
+  hopperPay.unexport()
+  hopperCount.unexport()
 
-  try {
-    if (joystick) {
-      joystick.removeAllListeners()
-      joystick = null
-    }
-
-    if (rl) {
-      rl.close()
-      rl = null
-    }
-  } catch (err) {
-    console.error('[SHUTDOWN ERROR]', err.message)
-  } finally {
-    process.exit(0)
-  }
+  if (joystick) joystick.removeAllListeners()
+  process.exit(0)
 }
 
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
-process.on('uncaughtException', err => {
-  console.error('[FATAL]', err)
-  shutdown()
-})
 
 // ============================
-// STARTUP
+// START
 // ============================
 
 startUsbEncoder()
