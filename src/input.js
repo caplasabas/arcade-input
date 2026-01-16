@@ -13,7 +13,7 @@ const HOPPER_PAY_PIN = 17
 const HOPPER_COUNT_PIN = 27
 
 // Hopper safety
-const HOPPER_TIMEOUT_MS = 15000  // max run per payout
+const HOPPER_TIMEOUT_MS = 15000 // max run per payout
 
 // Joystick button → action map
 const JOYSTICK_BUTTON_MAP = {
@@ -40,22 +40,24 @@ const COIN_PULSE_MAP = {
 }
 
 // ============================
-// STATE
+// GLOBAL STATE
 // ============================
 
-let joystick = null
 let shuttingDown = false
+let joystick = null
 
+// Coin state
 let coinPulseCount = 0
 let coinPulseTimer = null
 let lastCoinTime = 0
 
-// Hopper state
-let hopperPay = new Gpio(HOPPER_PAY_PIN, 'out')
-let hopperCount = new Gpio(HOPPER_COUNT_PIN, 'in', 'falling', {
-  debounceTimeout: 5
+// Hopper GPIO
+const hopperPay = new Gpio(HOPPER_PAY_PIN, 'out')
+const hopperCount = new Gpio(HOPPER_COUNT_PIN, 'in', 'falling', {
+  debounceTimeout: 5,
 })
 
+// Hopper state
 let hopperActive = false
 let hopperTarget = 0
 let hopperDispensed = 0
@@ -68,11 +70,15 @@ let hopperTimeout = null
 async function dispatch(payload) {
   if (shuttingDown) return
 
-  await fetch(API, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  })
+  try {
+    await fetch(API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+  } catch (err) {
+    console.error('[DISPATCH] Failed:', err.message)
+  }
 }
 
 // ============================
@@ -80,6 +86,8 @@ async function dispatch(payload) {
 // ============================
 
 function handleCoinPulse() {
+  if (shuttingDown) return
+
   coinPulseCount++
 
   if (coinPulseTimer) return
@@ -101,7 +109,7 @@ function handleCoinPulse() {
 
     dispatch({
       type: 'COIN',
-      credits
+      credits,
     })
   }, COIN_PULSE_WINDOW_MS)
 }
@@ -111,6 +119,7 @@ function handleCoinPulse() {
 // ============================
 
 function startHopper(amount) {
+  if (shuttingDown) return
   if (hopperActive) return
 
   hopperActive = true
@@ -119,7 +128,13 @@ function startHopper(amount) {
 
   console.log('[HOPPER] Start payout:', amount)
 
-  hopperPay.writeSync(1)
+  try {
+    hopperPay.writeSync(1)
+  } catch (err) {
+    console.error('[HOPPER] Failed to enable:', err.message)
+    stopHopper()
+    return
+  }
 
   hopperTimeout = setTimeout(() => {
     console.error('[HOPPER] Timeout / jam detected')
@@ -128,7 +143,12 @@ function startHopper(amount) {
 }
 
 function stopHopper() {
-  hopperPay.writeSync(0)
+  if (!hopperActive) return
+
+  try {
+    hopperPay.writeSync(0)
+  } catch {}
+
   hopperActive = false
 
   if (hopperTimeout) {
@@ -140,12 +160,13 @@ function stopHopper() {
 
   dispatch({
     type: 'WITHDRAW_COMPLETE',
-    dispensed: hopperDispensed
+    dispensed: hopperDispensed,
   })
 }
 
-// Count coins coming out
+// Hopper coin-out sensor
 hopperCount.watch(() => {
+  if (shuttingDown) return
   if (!hopperActive) return
 
   hopperDispensed++
@@ -164,6 +185,7 @@ function startUsbEncoder() {
   joystick = new Joystick(0, 3500, 350)
 
   joystick.on('button', (event) => {
+    if (shuttingDown) return
     if (event.value !== 1) return
 
     const action = JOYSTICK_BUTTON_MAP[event.number]
@@ -176,7 +198,7 @@ function startUsbEncoder() {
 
     dispatch({
       type: 'ACTION',
-      action
+      action,
     })
   })
 }
@@ -186,14 +208,50 @@ function startUsbEncoder() {
 // ============================
 
 function shutdown() {
+  if (shuttingDown) return
   shuttingDown = true
 
-  hopperPay.writeSync(0)
-  hopperPay.unexport()
-  hopperCount.unexport()
+  console.log('[SYSTEM] Shutting down')
 
-  if (joystick) joystick.removeAllListeners()
-  process.exit(0)
+  // ---- Timers ----
+  if (coinPulseTimer) {
+    clearTimeout(coinPulseTimer)
+    coinPulseTimer = null
+  }
+
+  if (hopperTimeout) {
+    clearTimeout(hopperTimeout)
+    hopperTimeout = null
+  }
+
+  // ---- Hopper ----
+  try {
+    hopperPay.writeSync(0)
+  } catch {}
+
+  // ---- GPIO ----
+  try {
+    hopperCount.unwatchAll()
+    hopperCount.unexport()
+  } catch {}
+
+  try {
+    hopperPay.unexport()
+  } catch {}
+
+  // ---- Joystick ----
+  if (joystick) {
+    joystick.removeAllListeners()
+    if (typeof joystick.close === 'function') {
+      joystick.close()
+    }
+    joystick = null
+  }
+
+  // ---- Exit ----
+  setTimeout(() => {
+    process.exit(0)
+  }, 50)
 }
 
 process.on('SIGINT', shutdown)
