@@ -36,14 +36,14 @@ const JOYSTICK_BUTTON_MAP = {
   9: 'START',
 }
 
-const COIN_PULSE_WINDOW_MS = 400
-const MIN_COIN_INTERVAL_MS = 700
-const MAX_PULSES_PER_COIN = 12
+const COIN_PULSE_WINDOW_MS = 1200
+const MIN_COIN_INTERVAL_MS = 800
+const MAX_PULSES_PER_COIN = 20
 
 const COIN_PULSE_MAP = {
-  1: 1,
   5: 5,
   10: 10,
+  20: 20
 }
 
 // ============================
