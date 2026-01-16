@@ -1,6 +1,16 @@
+/**
+ * Arcade Input Service (Raspberry Pi)
+ * ----------------------------------
+ * - USB arcade encoder (joystick)
+ * - Coin acceptor (pulse-based)
+ * - Coin hopper (12V via relay + coin-out sensor)
+ *
+ * GPIO handled via libgpiod CLI (gpioset / gpiomon)
+ */
+
 import fetch from 'node-fetch'
 import Joystick from 'joystick'
-import { Gpio } from 'onoff'
+import { spawn } from 'child_process'
 
 // ============================
 // CONFIG
@@ -8,14 +18,15 @@ import { Gpio } from 'onoff'
 
 const API = 'http://localhost:5173/input'
 
-// GPIO pins (BCM numbering)
-const HOPPER_PAY_PIN = 17
-const HOPPER_COUNT_PIN = 27
+// GPIO (BCM)
+const GPIOCHIP = 'gpiochip0'
+const HOPPER_PAY_PIN = 17      // Relay / MOSFET
+const HOPPER_COUNT_PIN = 27    // Coin-out opto
 
 // Hopper safety
-const HOPPER_TIMEOUT_MS = 15000 // max run per payout
+const HOPPER_TIMEOUT_MS = 15000
 
-// Joystick button → action map
+// Joystick map
 const JOYSTICK_BUTTON_MAP = {
   0: 'SPIN',
   1: 'BET_DOWN',
@@ -28,7 +39,7 @@ const JOYSTICK_BUTTON_MAP = {
   9: 'START',
 }
 
-// Coin pulse aggregation
+// Coin acceptor pulses
 const COIN_PULSE_WINDOW_MS = 400
 const MIN_COIN_INTERVAL_MS = 700
 const MAX_PULSES_PER_COIN = 12
@@ -40,28 +51,23 @@ const COIN_PULSE_MAP = {
 }
 
 // ============================
-// GLOBAL STATE
+// STATE
 // ============================
 
 let shuttingDown = false
 let joystick = null
 
-// Coin state
+// Coin-in
 let coinPulseCount = 0
 let coinPulseTimer = null
 let lastCoinTime = 0
 
-// Hopper GPIO
-const hopperPay = new Gpio(HOPPER_PAY_PIN, 'out')
-const hopperCount = new Gpio(HOPPER_COUNT_PIN, 'in', 'falling', {
-  debounceTimeout: 5,
-})
-
-// Hopper state
+// Hopper
 let hopperActive = false
 let hopperTarget = 0
 let hopperDispensed = 0
 let hopperTimeout = null
+let hopperMonitor = null
 
 // ============================
 // DISPATCH
@@ -69,7 +75,6 @@ let hopperTimeout = null
 
 async function dispatch(payload) {
   if (shuttingDown) return
-
   try {
     await fetch(API, {
       method: 'POST',
@@ -77,12 +82,12 @@ async function dispatch(payload) {
       body: JSON.stringify(payload),
     })
   } catch (err) {
-    console.error('[DISPATCH] Failed:', err.message)
+    console.error('[DISPATCH]', err.message)
   }
 }
 
 // ============================
-// COIN INPUT (ACCEPTOR)
+// COIN ACCEPTOR
 // ============================
 
 function handleCoinPulse() {
@@ -115,29 +120,44 @@ function handleCoinPulse() {
 }
 
 // ============================
-// HOPPER CONTROL
+// HOPPER CONTROL (libgpiod)
 // ============================
 
+function gpioset(pin, value) {
+  spawn('gpioset', [GPIOCHIP, `${pin}=${value}`])
+}
+
 function startHopper(amount) {
-  if (shuttingDown) return
-  if (hopperActive) return
+  if (shuttingDown || hopperActive) return
 
   hopperActive = true
   hopperTarget = amount
   hopperDispensed = 0
 
-  console.log('[HOPPER] Start payout:', amount)
+  console.log('[HOPPER] Start payout', amount)
 
-  try {
-    hopperPay.writeSync(1)
-  } catch (err) {
-    console.error('[HOPPER] Failed to enable:', err.message)
-    stopHopper()
-    return
-  }
+  gpioset(HOPPER_PAY_PIN, 1)
+
+  hopperMonitor = spawn('gpiomon', [
+    '--rising-edge',
+    '--num-events=0',
+    GPIOCHIP,
+    `${HOPPER_COUNT_PIN}`,
+  ])
+
+  hopperMonitor.stdout.on('data', () => {
+    if (!hopperActive) return
+
+    hopperDispensed++
+    console.log('[HOPPER] Coin out', hopperDispensed)
+
+    if (hopperDispensed >= hopperTarget) {
+      stopHopper()
+    }
+  })
 
   hopperTimeout = setTimeout(() => {
-    console.error('[HOPPER] Timeout / jam detected')
+    console.error('[HOPPER] Timeout / jam')
     stopHopper()
   }, HOPPER_TIMEOUT_MS)
 }
@@ -145,11 +165,14 @@ function startHopper(amount) {
 function stopHopper() {
   if (!hopperActive) return
 
-  try {
-    hopperPay.writeSync(0)
-  } catch {}
+  gpioset(HOPPER_PAY_PIN, 0)
 
   hopperActive = false
+
+  if (hopperMonitor) {
+    hopperMonitor.kill()
+    hopperMonitor = null
+  }
 
   if (hopperTimeout) {
     clearTimeout(hopperTimeout)
@@ -164,19 +187,6 @@ function stopHopper() {
   })
 }
 
-// Hopper coin-out sensor
-hopperCount.watch(() => {
-  if (shuttingDown) return
-  if (!hopperActive) return
-
-  hopperDispensed++
-  console.log('[HOPPER] Coin out', hopperDispensed)
-
-  if (hopperDispensed >= hopperTarget) {
-    stopHopper()
-  }
-})
-
 // ============================
 // USB ENCODER
 // ============================
@@ -184,15 +194,19 @@ hopperCount.watch(() => {
 function startUsbEncoder() {
   joystick = new Joystick(0, 3500, 350)
 
-  joystick.on('button', (event) => {
-    if (shuttingDown) return
-    if (event.value !== 1) return
+  joystick.on('button', (e) => {
+    if (shuttingDown || e.value !== 1) return
 
-    const action = JOYSTICK_BUTTON_MAP[event.number]
+    const action = JOYSTICK_BUTTON_MAP[e.number]
     if (!action) return
 
     if (action === 'COIN') {
       handleCoinPulse()
+      return
+    }
+
+    if (action === 'WITHDRAW') {
+      dispatch({ type: 'WITHDRAW_REQUEST' })
       return
     }
 
@@ -211,47 +225,17 @@ function shutdown() {
   if (shuttingDown) return
   shuttingDown = true
 
-  console.log('[SYSTEM] Shutting down')
+  console.log('[SYSTEM] Shutdown')
 
-  // ---- Timers ----
-  if (coinPulseTimer) {
-    clearTimeout(coinPulseTimer)
-    coinPulseTimer = null
-  }
+  try { gpioset(HOPPER_PAY_PIN, 0) } catch {}
+  try { hopperMonitor?.kill() } catch {}
 
-  if (hopperTimeout) {
-    clearTimeout(hopperTimeout)
-    hopperTimeout = null
-  }
-
-  // ---- Hopper ----
-  try {
-    hopperPay.writeSync(0)
-  } catch {}
-
-  // ---- GPIO ----
-  try {
-    hopperCount.unwatchAll()
-    hopperCount.unexport()
-  } catch {}
-
-  try {
-    hopperPay.unexport()
-  } catch {}
-
-  // ---- Joystick ----
   if (joystick) {
     joystick.removeAllListeners()
-    if (typeof joystick.close === 'function') {
-      joystick.close()
-    }
-    joystick = null
+    joystick.close?.()
   }
 
-  // ---- Exit ----
-  setTimeout(() => {
-    process.exit(0)
-  }, 50)
+  setTimeout(() => process.exit(0), 50)
 }
 
 process.on('SIGINT', shutdown)
