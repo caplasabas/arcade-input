@@ -164,20 +164,20 @@ function finalizeCoin() {
 
   resetCoin()
 
-  const value = resolveCoinValue(pulses)
-  if (!value) {
-    console.warn(
-      `[COIN] UNKNOWN pulses=${pulses} duration=${duration}ms`
-    )
-    return
-  }
+  // const value = resolveCoinValue(pulses)
+  // if (!value) {
+  //   console.warn(
+  //     `[COIN] UNKNOWN pulses=${pulses} duration=${duration}ms`
+  //   )
+  //   return
+  // }
 
   console.log(
-    `[COIN] ACCEPT pulses=${pulses} value=${value} duration=${duration}ms`
+    `[COIN] ACCEPT pulses=${pulses} value=${pulses} duration=${duration}ms`
   )
 
   // ---- BATCH ACCUMULATION ----
-  batchCredits += value
+  batchCredits += pulses
 
   if (batchTimer) clearTimeout(batchTimer)
   batchTimer = setTimeout(flushBatch, COIN_BATCH_GAP_MS)
