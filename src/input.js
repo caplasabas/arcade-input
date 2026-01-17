@@ -2,10 +2,10 @@
  * Arcade Input Service (Raspberry Pi)
  * ----------------------------------
  * - USB arcade encoder (joystick)
- * - Coin acceptor via optocoupler → GPIO
+ * - Coin acceptor (pulse-based via relay)
  * - Coin hopper (12V via relay + coin-out sensor)
  *
- * GPIO handled via libgpiod (gpiomon / gpioset)
+ * GPIO handled via libgpiod CLI (gpioset / gpiomon)
  */
 
 import fetch from 'node-fetch'
@@ -18,35 +18,32 @@ import { spawn } from 'child_process'
 
 const API = 'http://localhost:5173/input'
 
-// GPIO (BCM numbering)
-const COIN_IN_PIN = 22        // Physical pin 15
-const HOPPER_PAY_PIN = 17     // Physical pin 11
-const HOPPER_COUNT_PIN = 27   // Physical pin 13
+const GPIOCHIP = 'gpiochip0'
+const HOPPER_PAY_PIN = 17
+const HOPPER_COUNT_PIN = 27
 
 const HOPPER_TIMEOUT_MS = 15000
 
-// USB encoder mapping
 const JOYSTICK_BUTTON_MAP = {
   0: 'SPIN',
   1: 'BET_DOWN',
   2: 'BET_UP',
   3: 'AUTO',
+  4: 'COIN',
   5: 'WITHDRAW',
   6: 'TURBO',
   8: 'MENU',
   9: 'START',
 }
 
-// Coin pulse timing (optocoupler-safe)
-const COIN_PULSE_WINDOW_MS = 2500
-const MIN_COIN_INTERVAL_MS = 1200
+const COIN_PULSE_WINDOW_MS = 3000   // relay-safe
+const MIN_COIN_INTERVAL_MS = 1500
 const MAX_PULSES_PER_COIN = 20
 
-// Pulse → credit mapping
 const COIN_PULSE_MAP = {
   5: 5,
   10: 10,
-  20: 20,
+  20: 20
 }
 
 // ============================
@@ -59,7 +56,6 @@ let joystick = null
 let coinPulseCount = 0
 let coinPulseTimer = null
 let lastCoinTime = 0
-let coinMonitor = null
 
 let hopperActive = false
 let hopperTarget = 0
@@ -74,10 +70,8 @@ let hopperMonitor = null
 console.log(`
 ARCADE INPUT SERVICE
 --------------------
-USB Encoder : /dev/input/js0
-Coin GPIO   : GPIO${COIN_IN_PIN} (Pin 15)
-Hopper Pay  : GPIO${HOPPER_PAY_PIN} (Pin 11)
-Hopper Cnt  : GPIO${HOPPER_COUNT_PIN} (Pin 13)
+USB Encoder: /dev/input/js0
+GPIO: ${GPIOCHIP}
 
 Ctrl+C to exit
 `)
@@ -102,7 +96,7 @@ async function dispatch(payload) {
 }
 
 // ============================
-// COIN ACCEPTOR (GPIO)
+// COIN ACCEPTOR
 // ============================
 
 function handleCoinPulse() {
@@ -119,14 +113,11 @@ function handleCoinPulse() {
 
     const now = Date.now()
 
-    if (pulses <= 0 || pulses > MAX_PULSES_PER_COIN) return
+    if (pulses > MAX_PULSES_PER_COIN) return
     if (now - lastCoinTime < MIN_COIN_INTERVAL_MS) return
 
     const credits = COIN_PULSE_MAP[pulses]
-    if (!credits) {
-      console.warn('[COIN] Unknown pulse count:', pulses)
-      return
-    }
+    if (!credits) return
 
     lastCoinTime = now
 
@@ -139,24 +130,6 @@ function handleCoinPulse() {
   }, COIN_PULSE_WINDOW_MS)
 }
 
-function startCoinMonitor() {
-  console.log('[COIN] Listening on GPIO', COIN_IN_PIN)
-
-  coinMonitor = spawn('gpiomon', [
-    '-e', 'falling',
-    `GPIO${COIN_IN_PIN}`,
-  ])
-
-  coinMonitor.stdout.on('data', data => {
-    console.error('[COIN GPIO DATA]', data.toString())
-    handleCoinPulse()
-  })
-
-  coinMonitor.stderr.on('data', data => {
-    console.error('[COIN GPIO ERROR]', data.toString())
-  })
-}
-
 // ============================
 // GPIO HELPERS
 // ============================
@@ -164,7 +137,8 @@ function startCoinMonitor() {
 function gpioset(pin, value) {
   spawn('gpioset', [
     '--mode=signal',
-    `GPIO${pin}=${value}`,
+    GPIOCHIP,
+    `${pin}=${value}`,
   ])
 }
 
@@ -184,23 +158,21 @@ function startHopper(amount) {
   gpioset(HOPPER_PAY_PIN, 1)
 
   hopperMonitor = spawn('gpiomon', [
-    '-e', 'rising',
-    `GPIO${HOPPER_COUNT_PIN}`,
+    '--rising-edge',
+    GPIOCHIP,
+    `${HOPPER_COUNT_PIN}`,
   ])
 
-  hopperMonitor.stdout.on('data', () => {
-    if (!hopperActive) return
-
-    hopperDispensed++
-    console.log('[HOPPER] COIN OUT', hopperDispensed)
-
-    if (hopperDispensed >= hopperTarget) {
-      stopHopper()
+  hopperMonitor.stdout.on('data', data => {
+    const lines = data.toString().trim().split('\n')
+    for (const _ of lines) {
+      if (!hopperActive) return
+      hopperDispensed++
+      console.log('[HOPPER] COIN OUT', hopperDispensed)
+      if (hopperDispensed >= hopperTarget) {
+        stopHopper()
+      }
     }
-  })
-
-  hopperMonitor.stderr.on('data', data => {
-    console.error('[HOPPER GPIO ERROR]', data.toString())
   })
 
   hopperTimeout = setTimeout(() => {
@@ -247,10 +219,8 @@ function startUsbEncoder() {
 
     console.log('[JOYSTICK]', e.number, action)
 
-    if (action === 'WITHDRAW') {
-      dispatch({ type: 'WITHDRAW_REQUEST' })
-      return
-    }
+    if (action === 'COIN') return handleCoinPulse()
+    if (action === 'WITHDRAW') return dispatch({ type: 'WITHDRAW_REQUEST' })
 
     dispatch({
       type: 'ACTION',
@@ -271,7 +241,6 @@ function shutdown() {
 
   try { gpioset(HOPPER_PAY_PIN, 0) } catch {}
   try { hopperMonitor?.kill() } catch {}
-  try { coinMonitor?.kill() } catch {}
   try { joystick?.close?.() } catch {}
 
   setTimeout(() => process.exit(0), 50)
@@ -285,4 +254,3 @@ process.on('SIGTERM', shutdown)
 // ============================
 
 startUsbEncoder()
-startCoinMonitor()
