@@ -2,10 +2,10 @@
  * Arcade Input Service (Raspberry Pi)
  * ----------------------------------
  * - USB arcade encoder (joystick)
- * - Coin acceptor (pulse-based)
+ * - Coin acceptor (pulse-based via relay)
  * - Coin hopper (12V via relay + coin-out sensor)
  *
- * GPIO handled via libgpiod CLI
+ * GPIO handled via libgpiod CLI (gpioset / gpiomon)
  */
 
 import fetch from 'node-fetch'
@@ -21,6 +21,7 @@ const API = 'http://localhost:5173/input'
 const GPIOCHIP = 'gpiochip0'
 const HOPPER_PAY_PIN = 17
 const HOPPER_COUNT_PIN = 27
+
 const HOPPER_TIMEOUT_MS = 15000
 
 const JOYSTICK_BUTTON_MAP = {
@@ -28,21 +29,21 @@ const JOYSTICK_BUTTON_MAP = {
   1: 'BET_DOWN',
   2: 'BET_UP',
   3: 'AUTO',
+  4: 'COIN',
   5: 'WITHDRAW',
   6: 'TURBO',
   8: 'MENU',
   9: 'START',
 }
 
-// Coin timing (MEASURED)
-const COIN_IDLE_GAP_MS  = 350     // gap that ends ONE coin
-const COIN_BATCH_GAP_MS = 1200    // gap that ends coin insertion
+const COIN_IDLE_GAP_MS = 350
+const COIN_BATCH_GAP_MS = 1200
 const MAX_PULSES_PER_COIN = 20
 
 const COIN_PULSE_MAP = {
   5: 5,
   10: 10,
-  20: 20,
+  20: 20
 }
 
 // ============================
@@ -52,17 +53,16 @@ const COIN_PULSE_MAP = {
 let shuttingDown = false
 let joystick = null
 
-// Per-coin
+// Batch
+let batchCredits = 0
+let batchTimer = null
+
+
 let coinPulseCount = 0
 let coinIdleTimer = null
 let lastPulseTime = 0
 let coinStartTime = 0
 
-// Batch
-let batchCredits = 0
-let batchTimer = null
-
-// Hopper
 let hopperActive = false
 let hopperTarget = 0
 let hopperDispensed = 0
@@ -76,8 +76,8 @@ let hopperMonitor = null
 console.log(`
 ARCADE INPUT SERVICE
 --------------------
-USB Encoder : /dev/input/js0
-GPIO Chip   : ${GPIOCHIP}
+USB Encoder: /dev/input/js0
+GPIO: ${GPIOCHIP}
 
 Ctrl+C to exit
 `)
@@ -88,9 +88,9 @@ Ctrl+C to exit
 
 async function dispatch(payload) {
   if (shuttingDown) return
-  console.log('[SEND]', payload)
 
   try {
+    console.log('[SEND]', payload)
     await fetch(API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -174,13 +174,16 @@ function resetCoin() {
   lastPulseTime = 0
   coinStartTime = 0
 }
-
 // ============================
 // GPIO HELPERS
 // ============================
 
 function gpioset(pin, value) {
-  spawn('gpioset', ['--mode=signal', GPIOCHIP, `${pin}=${value}`])
+  spawn('gpioset', [
+    '--mode=signal',
+    GPIOCHIP,
+    `${pin}=${value}`,
+  ])
 }
 
 // ============================
@@ -195,6 +198,7 @@ function startHopper(amount) {
   hopperDispensed = 0
 
   console.log('[HOPPER] START', amount)
+
   gpioset(HOPPER_PAY_PIN, 1)
 
   hopperMonitor = spawn('gpiomon', [
@@ -209,7 +213,9 @@ function startHopper(amount) {
       if (!hopperActive) return
       hopperDispensed++
       console.log('[HOPPER] COIN OUT', hopperDispensed)
-      if (hopperDispensed >= hopperTarget) stopHopper()
+      if (hopperDispensed >= hopperTarget) {
+        stopHopper()
+      }
     }
   })
 
@@ -227,7 +233,11 @@ function stopHopper() {
 
   hopperMonitor?.kill()
   hopperMonitor = null
-  if (hopperTimeout) clearTimeout(hopperTimeout)
+
+  if (hopperTimeout) {
+    clearTimeout(hopperTimeout)
+    hopperTimeout = null
+  }
 
   console.log('[HOPPER] STOP', hopperDispensed)
 
@@ -253,12 +263,13 @@ function startUsbEncoder() {
 
     console.log('[JOYSTICK]', e.number, action)
 
-    if (action === 'WITHDRAW') {
-      dispatch({ type: 'WITHDRAW_REQUEST' })
-      return
-    }
+    if (action === 'COIN') return handleCoinPulse()
+    if (action === 'WITHDRAW') return dispatch({ type: 'WITHDRAW_REQUEST' })
 
-    dispatch({ type: 'ACTION', action })
+    dispatch({
+      type: 'ACTION',
+      action,
+    })
   })
 }
 
@@ -276,7 +287,7 @@ function shutdown() {
   try { hopperMonitor?.kill() } catch {}
   try { joystick?.close?.() } catch {}
 
-  process.exit(0)
+  setTimeout(() => process.exit(0), 50)
 }
 
 process.on('SIGINT', shutdown)
