@@ -36,8 +36,8 @@ const JOYSTICK_BUTTON_MAP = {
   9: 'START',
 }
 
-// Coin pulse behavior
-const COIN_IDLE_GAP_MS = 350        // gap that ends ONE coin
+// Coin pulse tuning (TEMP – will adjust after logs)
+const COIN_IDLE_GAP_MS = 350
 const MAX_PULSES_PER_COIN = 20
 
 const COIN_PULSE_MAP = {
@@ -55,6 +55,8 @@ let joystick = null
 
 let coinPulseCount = 0
 let coinIdleTimer = null
+let lastPulseTime = 0
+let coinStartTime = 0
 
 let hopperActive = false
 let hopperTarget = 0
@@ -72,6 +74,7 @@ ARCADE INPUT SERVICE
 USB Encoder: /dev/input/js0
 GPIO Chip  : ${GPIOCHIP}
 
+Coin debug logging ENABLED
 Ctrl+C to exit
 `)
 
@@ -95,35 +98,58 @@ async function dispatch(payload) {
 }
 
 // ============================
-// COIN ACCEPTOR (GAP-BASED)
+// COIN ACCEPTOR (DEBUG MODE)
 // ============================
 
 function handleCoinPulse() {
   if (shuttingDown) return
 
+  const now = Date.now()
+
+  if (coinPulseCount === 0) {
+    coinStartTime = now
+    console.log('\n[COIN] START')
+  }
+
+  const gap = lastPulseTime ? now - lastPulseTime : 0
+  lastPulseTime = now
+
   coinPulseCount++
 
+  console.log(
+    `[COIN] PULSE #${coinPulseCount} @ ${now % 100000}ms (+${gap}ms)`
+  )
+
   if (coinPulseCount > MAX_PULSES_PER_COIN) {
+    console.warn('[COIN] RESET (overflow)')
     resetCoin()
     return
   }
 
   if (coinIdleTimer) clearTimeout(coinIdleTimer)
 
-  coinIdleTimer = setTimeout(finalizeCoin, COIN_IDLE_GAP_MS)
+  coinIdleTimer = setTimeout(() => {
+    const idleGap = Date.now() - lastPulseTime
+    console.log(`[COIN] IDLE GAP ${idleGap}ms → finalize`)
+    finalizeCoin()
+  }, COIN_IDLE_GAP_MS)
 }
 
 function finalizeCoin() {
   const pulses = coinPulseCount
+  const duration = Date.now() - coinStartTime
+
   resetCoin()
 
   const credits = COIN_PULSE_MAP[pulses]
   if (!credits) {
-    console.warn('[COIN] Unknown pulse count:', pulses)
+    console.warn(`[COIN] UNKNOWN pulses=${pulses} duration=${duration}ms`)
     return
   }
 
-  console.log('[COIN] Pulses:', pulses, 'Credits:', credits)
+  console.log(
+    `[COIN] FINAL pulses=${pulses} credits=${credits} duration=${duration}ms`
+  )
 
   dispatch({
     type: 'COIN',
@@ -134,6 +160,8 @@ function finalizeCoin() {
 function resetCoin() {
   coinPulseCount = 0
   coinIdleTimer = null
+  lastPulseTime = 0
+  coinStartTime = 0
 }
 
 // ============================
