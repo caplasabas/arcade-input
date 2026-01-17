@@ -5,7 +5,7 @@
  * - Coin acceptor via optocoupler → GPIO
  * - Coin hopper (12V via relay + coin-out sensor)
  *
- * GPIO handled via libgpiod CLI (gpioset / gpiomon)
+ * GPIO handled via libgpiod (gpiomon / gpioset)
  */
 
 import fetch from 'node-fetch'
@@ -17,11 +17,10 @@ import { spawn } from 'child_process'
 // ============================
 
 const API = 'http://localhost:5173/input'
-
 const GPIOCHIP = 'gpiochip0'
 
 // GPIO (BCM numbering)
-const COIN_IN_PIN = 22        // Physical pin 15 (optocoupler output)
+const COIN_IN_PIN = 22        // Physical pin 15
 const HOPPER_PAY_PIN = 17     // Physical pin 11
 const HOPPER_COUNT_PIN = 27   // Physical pin 13
 
@@ -39,7 +38,7 @@ const JOYSTICK_BUTTON_MAP = {
   9: 'START',
 }
 
-// Coin pulse handling
+// Coin pulse timing (optocoupler-safe)
 const COIN_PULSE_WINDOW_MS = 2500
 const MIN_COIN_INTERVAL_MS = 1200
 const MAX_PULSES_PER_COIN = 20
@@ -61,13 +60,13 @@ let joystick = null
 let coinPulseCount = 0
 let coinPulseTimer = null
 let lastCoinTime = 0
+let coinMonitor = null
 
 let hopperActive = false
 let hopperTarget = 0
 let hopperDispensed = 0
 let hopperTimeout = null
 let hopperMonitor = null
-let coinMonitor = null
 
 // ============================
 // BOOT
@@ -120,7 +119,7 @@ function handleCoinPulse() {
 
     const now = Date.now()
 
-    if (pulses > MAX_PULSES_PER_COIN) return
+    if (pulses <= 0 || pulses > MAX_PULSES_PER_COIN) return
     if (now - lastCoinTime < MIN_COIN_INTERVAL_MS) return
 
     const credits = COIN_PULSE_MAP[pulses]
@@ -144,13 +143,17 @@ function startCoinMonitor() {
   console.log('[COIN] Listening on GPIO', COIN_IN_PIN)
 
   coinMonitor = spawn('gpiomon', [
-    '--falling-edge',
+    '-e', 'falling',
     GPIOCHIP,
     `${COIN_IN_PIN}`,
   ])
 
   coinMonitor.stdout.on('data', () => {
     handleCoinPulse()
+  })
+
+  coinMonitor.stderr.on('data', data => {
+    console.error('[COIN GPIO ERROR]', data.toString())
   })
 }
 
@@ -182,7 +185,7 @@ function startHopper(amount) {
   gpioset(HOPPER_PAY_PIN, 1)
 
   hopperMonitor = spawn('gpiomon', [
-    '--rising-edge',
+    '-e', 'rising',
     GPIOCHIP,
     `${HOPPER_COUNT_PIN}`,
   ])
