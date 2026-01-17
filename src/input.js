@@ -36,15 +36,20 @@ const JOYSTICK_BUTTON_MAP = {
   9: 'START',
 }
 
-const COIN_IDLE_GAP_MS = 350
-const COIN_BATCH_GAP_MS = 1200
-const MAX_PULSES_PER_COIN = 20
+// Coin timing (based on your measurements)
+const COIN_IDLE_GAP_MS = 350        // gap that ends ONE coin
+const COIN_BATCH_GAP_MS = 450      // gap that ends coin insertion session
+const MAX_PULSES_PER_COIN = 25
 
-const COIN_PULSE_MAP = {
-  5: 5,
-  10: 10,
-  20: 20
-}
+// Nominal pulse counts per coin
+const COIN_DENOMINATIONS = [
+  { pulses: 5,  value: 5 },
+  { pulses: 10, value: 10 },
+  { pulses: 20, value: 20 },
+]
+
+// Allowed pulse tolerance (± pulses)
+const PULSE_TOLERANCE = 2
 
 // ============================
 // STATE
@@ -53,16 +58,17 @@ const COIN_PULSE_MAP = {
 let shuttingDown = false
 let joystick = null
 
-// Batch
+// Coin batch
 let batchCredits = 0
 let batchTimer = null
 
-
+// Current coin
 let coinPulseCount = 0
 let coinIdleTimer = null
 let lastPulseTime = 0
 let coinStartTime = 0
 
+// Hopper
 let hopperActive = false
 let hopperTarget = 0
 let hopperDispensed = 0
@@ -77,7 +83,7 @@ console.log(`
 ARCADE INPUT SERVICE
 --------------------
 USB Encoder: /dev/input/js0
-GPIO: ${GPIOCHIP}
+GPIO Chip  : ${GPIOCHIP}
 
 Ctrl+C to exit
 `)
@@ -102,6 +108,25 @@ async function dispatch(payload) {
 }
 
 // ============================
+// COIN RESOLUTION
+// ============================
+
+function resolveCoinValue(pulses) {
+  let best = null
+  let bestDelta = Infinity
+
+  for (const coin of COIN_DENOMINATIONS) {
+    const delta = Math.abs(pulses - coin.pulses)
+    if (delta <= PULSE_TOLERANCE && delta < bestDelta) {
+      best = coin
+      bestDelta = delta
+    }
+  }
+
+  return best?.value ?? null
+}
+
+// ============================
 // COIN ACCEPTOR
 // ============================
 
@@ -120,14 +145,14 @@ function handleCoinPulse() {
   coinPulseCount++
 
   console.log(
-    `[COIN] PULSE #${coinPulseCount} @ ${now % 100000}ms (+${gap}ms)`
+    `[COIN] PULSE #${coinPulseCount} (+${gap}ms)`
   )
 
-  if (coinPulseCount > MAX_PULSES_PER_COIN) {
-    console.warn('[COIN] OVERFLOW — reset')
-    resetCoin()
-    return
-  }
+  // if (coinPulseCount > MAX_PULSES_PER_COIN) {
+  //   console.warn('[COIN] OVERFLOW — reset')
+  //   resetCoin()
+  //   return
+  // }
 
   if (coinIdleTimer) clearTimeout(coinIdleTimer)
   coinIdleTimer = setTimeout(finalizeCoin, COIN_IDLE_GAP_MS)
@@ -139,24 +164,28 @@ function finalizeCoin() {
 
   resetCoin()
 
-  const credits = COIN_PULSE_MAP[pulses]
-  if (!credits) {
-    console.warn(`[COIN] UNKNOWN pulses=${pulses} duration=${duration}ms`)
+  const value = resolveCoinValue(pulses)
+  if (!value) {
+    console.warn(
+      `[COIN] UNKNOWN pulses=${pulses} duration=${duration}ms`
+    )
     return
   }
 
   console.log(
-    `[COIN] COIN pulses=${pulses} credits=${credits} duration=${duration}ms`
+    `[COIN] ACCEPT pulses=${pulses} value=${value} duration=${duration}ms`
   )
 
   // ---- BATCH ACCUMULATION ----
-  batchCredits += credits
+  batchCredits += value
 
   if (batchTimer) clearTimeout(batchTimer)
   batchTimer = setTimeout(flushBatch, COIN_BATCH_GAP_MS)
 }
 
 function flushBatch() {
+  if (batchCredits <= 0) return
+
   console.log(`[COIN] BATCH FINAL credits=${batchCredits}`)
 
   dispatch({
