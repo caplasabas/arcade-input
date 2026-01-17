@@ -147,7 +147,8 @@ function startCoinMonitor() {
     `GPIO${COIN_IN_PIN}`,
   ])
 
-  coinMonitor.stdout.on('data', () => {
+  coinMonitor.stdout.on('data', data => {
+    console.error('[COIN GPIO DATA]', data.toString())
     handleCoinPulse()
   })
 
