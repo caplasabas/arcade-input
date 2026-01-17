@@ -2,10 +2,10 @@
  * Arcade Input Service (Raspberry Pi)
  * ----------------------------------
  * - USB arcade encoder (joystick)
- * - Coin acceptor (pulse-based)
+ * - Coin acceptor (pulse-based via relay)
  * - Coin hopper (12V via relay + coin-out sensor)
  *
- * GPIO handled via libgpiod
+ * GPIO handled via libgpiod CLI (gpioset / gpiomon)
  */
 
 import fetch from 'node-fetch'
@@ -18,32 +18,31 @@ import { spawn } from 'child_process'
 
 const API = 'http://localhost:5173/input'
 
-// Hopper GPIO
 const GPIOCHIP = 'gpiochip0'
 const HOPPER_PAY_PIN = 17
 const HOPPER_COUNT_PIN = 27
+
 const HOPPER_TIMEOUT_MS = 15000
 
-// USB encoder mapping
 const JOYSTICK_BUTTON_MAP = {
   0: 'SPIN',
   1: 'BET_DOWN',
   2: 'BET_UP',
   3: 'AUTO',
+  4: 'COIN',
   5: 'WITHDRAW',
   6: 'TURBO',
   8: 'MENU',
   9: 'START',
 }
 
-// Coin pulse tuning (TEMP – will adjust after logs)
 const COIN_IDLE_GAP_MS = 350
 const MAX_PULSES_PER_COIN = 20
 
 const COIN_PULSE_MAP = {
   5: 5,
   10: 10,
-  20: 20,
+  20: 20
 }
 
 // ============================
@@ -52,6 +51,7 @@ const COIN_PULSE_MAP = {
 
 let shuttingDown = false
 let joystick = null
+
 
 let coinPulseCount = 0
 let coinIdleTimer = null
@@ -72,9 +72,8 @@ console.log(`
 ARCADE INPUT SERVICE
 --------------------
 USB Encoder: /dev/input/js0
-GPIO Chip  : ${GPIOCHIP}
+GPIO: ${GPIOCHIP}
 
-Coin debug logging ENABLED
 Ctrl+C to exit
 `)
 
@@ -253,10 +252,8 @@ function startUsbEncoder() {
 
     console.log('[JOYSTICK]', e.number, action)
 
-    if (action === 'WITHDRAW') {
-      dispatch({ type: 'WITHDRAW_REQUEST' })
-      return
-    }
+    if (action === 'COIN') return handleCoinPulse()
+    if (action === 'WITHDRAW') return dispatch({ type: 'WITHDRAW_REQUEST' })
 
     dispatch({
       type: 'ACTION',
@@ -279,7 +276,7 @@ function shutdown() {
   try { hopperMonitor?.kill() } catch {}
   try { joystick?.close?.() } catch {}
 
-  process.exit(0)
+  setTimeout(() => process.exit(0), 50)
 }
 
 process.on('SIGINT', shutdown)
