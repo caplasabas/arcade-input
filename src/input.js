@@ -37,7 +37,7 @@ const JOYSTICK_BUTTON_MAP = {
 }
 
 // Coin timing (based on your measurements)
-const COIN_IDLE_GAP_MS = 120        // gap that ends ONE coin
+const COIN_IDLE_GAP_MS = 150        // gap that ends ONE coin
 const COIN_BATCH_GAP_MS = 200      // gap that ends coin insertion session
 const MAX_PULSES_PER_COIN = 25
 
