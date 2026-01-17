@@ -17,7 +17,6 @@ import { spawn } from 'child_process'
 // ============================
 
 const API = 'http://localhost:5173/input'
-const GPIOCHIP = 'gpiochip0'
 
 // GPIO (BCM numbering)
 const COIN_IN_PIN = 22        // Physical pin 15
@@ -76,8 +75,9 @@ console.log(`
 ARCADE INPUT SERVICE
 --------------------
 USB Encoder : /dev/input/js0
-Coin GPIO   : BCM ${COIN_IN_PIN} (Pin 15)
-GPIO Chip   : ${GPIOCHIP}
+Coin GPIO   : GPIO${COIN_IN_PIN} (Pin 15)
+Hopper Pay  : GPIO${HOPPER_PAY_PIN} (Pin 11)
+Hopper Cnt  : GPIO${HOPPER_COUNT_PIN} (Pin 13)
 
 Ctrl+C to exit
 `)
@@ -144,8 +144,7 @@ function startCoinMonitor() {
 
   coinMonitor = spawn('gpiomon', [
     '-e', 'falling',
-    GPIOCHIP,
-    `${COIN_IN_PIN}`,
+    `GPIO${COIN_IN_PIN}`,
   ])
 
   coinMonitor.stdout.on('data', () => {
@@ -164,8 +163,7 @@ function startCoinMonitor() {
 function gpioset(pin, value) {
   spawn('gpioset', [
     '--mode=signal',
-    GPIOCHIP,
-    `${pin}=${value}`,
+    `GPIO${pin}=${value}`,
   ])
 }
 
@@ -186,8 +184,7 @@ function startHopper(amount) {
 
   hopperMonitor = spawn('gpiomon', [
     '-e', 'rising',
-    GPIOCHIP,
-    `${HOPPER_COUNT_PIN}`,
+    `GPIO${HOPPER_COUNT_PIN}`,
   ])
 
   hopperMonitor.stdout.on('data', () => {
@@ -199,6 +196,10 @@ function startHopper(amount) {
     if (hopperDispensed >= hopperTarget) {
       stopHopper()
     }
+  })
+
+  hopperMonitor.stderr.on('data', data => {
+    console.error('[HOPPER GPIO ERROR]', data.toString())
   })
 
   hopperTimeout = setTimeout(() => {
