@@ -180,7 +180,7 @@ function handleWithdrawPulse() {
 
   dispatch({
     type: 'WITHDRAW_COMPLETE',
-    dispensed: hopperDispensed,
+    dispensed: 1,
   })
   if (hopperDispensed >= hopperTarget) {
     stopHopper()
