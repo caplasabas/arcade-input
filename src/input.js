@@ -163,7 +163,7 @@ function startHopper(amount) {
 
   console.log('[HOPPER] START target=', amount)
 
-  gpioset(HOPPER_PAY_PIN, 1)
+  // gpioset(HOPPER_PAY_PIN, 1)
 
   hopperTimeout = setTimeout(() => {
     console.error('[HOPPER] TIMEOUT — FORCED STOP')
@@ -189,8 +189,8 @@ function handleWithdrawPulse() {
 
 function stopHopper() {
   if (!hopperActive) return
-
-  gpioset(HOPPER_PAY_PIN, 0)
+  //
+  // gpioset(HOPPER_PAY_PIN, 0)
   hopperActive = false
 
   if (hopperTimeout) {
