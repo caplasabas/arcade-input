@@ -2,8 +2,8 @@
  * Arcade Input Service (Raspberry Pi)
  * ----------------------------------
  * - USB arcade encoder (joystick)
- * - Coin acceptor (pulse-based via relay)
- * - Coin hopper (12V via relay + coin-out sensor)
+ * - Coin acceptor (pulse-based)
+ * - Coin hopper (12V via relay + hopper coin slot feedback)
  *
  * GPIO handled via libgpiod CLI (gpioset / gpiomon)
  */
@@ -20,7 +20,6 @@ const API = 'http://localhost:5173/input'
 
 const GPIOCHIP = 'gpiochip0'
 const HOPPER_PAY_PIN = 17
-const HOPPER_COUNT_PIN = 27
 
 const HOPPER_TIMEOUT_MS = 15000
 
@@ -29,27 +28,17 @@ const JOYSTICK_BUTTON_MAP = {
   1: 'BET_DOWN',
   2: 'BET_UP',
   3: 'AUTO',
-  4: 'COIN',
-  5: 'WITHDRAW',
-  6: 'TURBO',
+  4: 'COIN',           // deposit coin pulses
+  5: 'WITHDRAW',       // UI request
+  6: 'WITHDRAW_COIN',  // hopper coin slot pulses
+  7: 'TURBO',
   8: 'MENU',
   9: 'START',
 }
 
-// Coin timing (based on your measurements)
-const COIN_IDLE_GAP_MS = 130        // gap that ends ONE coin
-const COIN_BATCH_GAP_MS = 180      // gap that ends coin insertion session
-const MAX_PULSES_PER_COIN = 25
-
-// Nominal pulse counts per coin
-const COIN_DENOMINATIONS = [
-  { pulses: 5,  value: 5 },
-  { pulses: 10, value: 10 },
-  { pulses: 20, value: 20 },
-]
-
-// Allowed pulse tolerance (± pulses)
-const PULSE_TOLERANCE = 2
+// Coin timing (measured FAST mode)
+const COIN_IDLE_GAP_MS = 130
+const COIN_BATCH_GAP_MS = 180
 
 // ============================
 // STATE
@@ -58,22 +47,19 @@ const PULSE_TOLERANCE = 2
 let shuttingDown = false
 let joystick = null
 
-// Coin batch
-let batchCredits = 0
-let batchTimer = null
+// -------- Deposit coins --------
+let depositPulseCount = 0
+let depositIdleTimer = null
+let depositBatchCredits = 0
+let depositBatchTimer = null
+let depositLastPulseTime = 0
+let depositStartTime = 0
 
-// Current coin
-let coinPulseCount = 0
-let coinIdleTimer = null
-let lastPulseTime = 0
-let coinStartTime = 0
-
-// Hopper
+// -------- Hopper / withdrawal --------
 let hopperActive = false
 let hopperTarget = 0
 let hopperDispensed = 0
 let hopperTimeout = null
-let hopperMonitor = null
 
 // ============================
 // BOOT
@@ -82,8 +68,8 @@ let hopperMonitor = null
 console.log(`
 ARCADE INPUT SERVICE
 --------------------
-USB Encoder: /dev/input/js0
-GPIO Chip  : ${GPIOCHIP}
+USB Encoder : /dev/input/js0
+GPIO Chip   : ${GPIOCHIP}
 
 Ctrl+C to exit
 `)
@@ -108,115 +94,64 @@ async function dispatch(payload) {
 }
 
 // ============================
-// COIN RESOLUTION
+// DEPOSIT COIN HANDLING
 // ============================
 
-function resolveCoinValue(pulses) {
-  let best = null
-  let bestDelta = Infinity
-
-  for (const coin of COIN_DENOMINATIONS) {
-    const delta = Math.abs(pulses - coin.pulses)
-    if (delta <= PULSE_TOLERANCE && delta < bestDelta) {
-      best = coin
-      bestDelta = delta
-    }
-  }
-
-  return best?.value ?? null
-}
-
-// ============================
-// COIN ACCEPTOR
-// ============================
-
-function handleCoinPulse() {
-  if (shuttingDown) return
-
+function handleDepositPulse() {
   const now = Date.now()
 
-  if (coinPulseCount === 0) {
-    coinStartTime = now
-    console.log('\n[COIN] START')
+  if (depositPulseCount === 0) {
+    depositStartTime = now
+    console.log('\n[DEPOSIT] START')
   }
 
-  const gap = lastPulseTime ? now - lastPulseTime : 0
-  lastPulseTime = now
-  coinPulseCount++
+  const gap = depositLastPulseTime ? now - depositLastPulseTime : 0
+  depositLastPulseTime = now
+  depositPulseCount++
 
-  console.log(
-    `[COIN] PULSE #${coinPulseCount} (+${gap}ms)`
-  )
+  console.log(`[DEPOSIT] PULSE #${depositPulseCount} (+${gap}ms)`)
 
-  // if (coinPulseCount > MAX_PULSES_PER_COIN) {
-  //   console.warn('[COIN] OVERFLOW — reset')
-  //   resetCoin()
-  //   return
-  // }
-
-  if (coinIdleTimer) clearTimeout(coinIdleTimer)
-  coinIdleTimer = setTimeout(finalizeCoin, COIN_IDLE_GAP_MS)
+  if (depositIdleTimer) clearTimeout(depositIdleTimer)
+  depositIdleTimer = setTimeout(finalizeDepositCoin, COIN_IDLE_GAP_MS)
 }
 
-function finalizeCoin() {
-  const pulses = coinPulseCount
-  const duration = Date.now() - coinStartTime
+function finalizeDepositCoin() {
+  const pulses = depositPulseCount
+  const duration = Date.now() - depositStartTime
 
-  resetCoin()
+  resetDepositCoin()
 
-  // const value = resolveCoinValue(pulses)
-  // if (!value) {
-  //   console.warn(
-  //     `[COIN] UNKNOWN pulses=${pulses} duration=${duration}ms`
-  //   )
-  //   return
-  // }
+  console.log(`[DEPOSIT] COIN pulses=${pulses} duration=${duration}ms`)
 
-  console.log(
-    `[COIN] ACCEPT pulses=${pulses} value=${pulses} duration=${duration}ms`
-  )
+  depositBatchCredits += pulses
 
-  // ---- BATCH ACCUMULATION ----
-  batchCredits += pulses
-
-  if (batchTimer) clearTimeout(batchTimer)
-  batchTimer = setTimeout(flushBatch, COIN_BATCH_GAP_MS)
+  if (depositBatchTimer) clearTimeout(depositBatchTimer)
+  depositBatchTimer = setTimeout(flushDepositBatch, COIN_BATCH_GAP_MS)
 }
 
-function flushBatch() {
-  if (batchCredits <= 0) return
+function flushDepositBatch() {
+  if (depositBatchCredits <= 0) return
 
-  console.log(`[COIN] BATCH FINAL credits=${batchCredits}`)
+  console.log(`[DEPOSIT] BATCH FINAL credits=${depositBatchCredits}`)
 
   dispatch({
     type: 'COIN',
-    credits: batchCredits,
+    credits: depositBatchCredits,
   })
 
-  batchCredits = 0
-  batchTimer = null
+  depositBatchCredits = 0
+  depositBatchTimer = null
 }
 
-function resetCoin() {
-  coinPulseCount = 0
-  coinIdleTimer = null
-  lastPulseTime = 0
-  coinStartTime = 0
-}
-// ============================
-// GPIO HELPERS
-// ============================
-
-function gpioset(pin, value) {
-  spawn('gpioset', [
-    '--mode=signal',
-    GPIOCHIP,
-    `${pin}=${value}`,
-  ])
+function resetDepositCoin() {
+  depositPulseCount = 0
+  depositIdleTimer = null
+  depositLastPulseTime = 0
+  depositStartTime = 0
 }
 
 // ============================
-// HOPPER
+// HOPPER CONTROL
 // ============================
 
 function startHopper(amount) {
@@ -226,32 +161,30 @@ function startHopper(amount) {
   hopperTarget = amount
   hopperDispensed = 0
 
-  console.log('[HOPPER] START', amount)
+  console.log('[HOPPER] START target=', amount)
 
   gpioset(HOPPER_PAY_PIN, 1)
 
-  hopperMonitor = spawn('gpiomon', [
-    '--rising-edge',
-    GPIOCHIP,
-    `${HOPPER_COUNT_PIN}`,
-  ])
-
-  hopperMonitor.stdout.on('data', data => {
-    const lines = data.toString().trim().split('\n')
-    for (const _ of lines) {
-      if (!hopperActive) return
-      hopperDispensed++
-      console.log('[HOPPER] COIN OUT', hopperDispensed)
-      if (hopperDispensed >= hopperTarget) {
-        stopHopper()
-      }
-    }
-  })
-
   hopperTimeout = setTimeout(() => {
-    console.error('[HOPPER] TIMEOUT / JAM')
+    console.error('[HOPPER] TIMEOUT — FORCED STOP')
     stopHopper()
   }, HOPPER_TIMEOUT_MS)
+}
+
+function handleWithdrawPulse() {
+  if (!hopperActive) return
+
+  hopperDispensed++
+
+  console.log(`[HOPPER] DISPENSED ${hopperDispensed}/${hopperTarget}`)
+
+  dispatch({
+    type: 'WITHDRAW_COMPLETE',
+    dispensed: hopperDispensed,
+  })
+  if (hopperDispensed >= hopperTarget) {
+    stopHopper()
+  }
 }
 
 function stopHopper() {
@@ -260,20 +193,28 @@ function stopHopper() {
   gpioset(HOPPER_PAY_PIN, 0)
   hopperActive = false
 
-  hopperMonitor?.kill()
-  hopperMonitor = null
-
   if (hopperTimeout) {
     clearTimeout(hopperTimeout)
     hopperTimeout = null
   }
 
-  console.log('[HOPPER] STOP', hopperDispensed)
+  console.log('[HOPPER] STOP dispensed=', hopperDispensed)
 
-  dispatch({
-    type: 'WITHDRAW_COMPLETE',
-    dispensed: hopperDispensed,
-  })
+  // dispatch({
+  //   type: 'WITHDRAW_COMPLETE',
+  //   dispensed: hopperDispensed,
+  // })
+}
+
+// ============================
+// GPIO HELPERS
+// ============================
+
+function gpioset(pin, value) {
+  spawn('gpioset', [
+    GPIOCHIP,
+    `${pin}=${value}`,
+  ])
 }
 
 // ============================
@@ -292,13 +233,23 @@ function startUsbEncoder() {
 
     console.log('[JOYSTICK]', e.number, action)
 
-    if (action === 'COIN') return handleCoinPulse()
-    if (action === 'WITHDRAW') return dispatch({ type: 'WITHDRAW_REQUEST' })
+    switch (action) {
+      case 'COIN':
+        handleDepositPulse()
+        break
 
-    dispatch({
-      type: 'ACTION',
-      action,
-    })
+      case 'WITHDRAW_COIN':
+        handleWithdrawPulse()
+        break
+
+      case 'WITHDRAW':
+        startHopper(50)
+        // dispatch({ type: 'WITHDRAW_REQUEST' })
+        break
+
+      default:
+        dispatch({ type: 'ACTION', action })
+    }
   })
 }
 
@@ -313,7 +264,6 @@ function shutdown() {
   console.log('[SYSTEM] SHUTDOWN')
 
   try { gpioset(HOPPER_PAY_PIN, 0) } catch {}
-  try { hopperMonitor?.kill() } catch {}
   try { joystick?.close?.() } catch {}
 
   setTimeout(() => process.exit(0), 50)
