@@ -21,7 +21,7 @@ const API = 'http://localhost:5173/input'
 const GPIOCHIP = 'gpiochip0'
 const HOPPER_PAY_PIN = 17
 
-const HOPPER_TIMEOUT_MS = 15000
+const HOPPER_TIMEOUT_MS = 60000
 
 const JOYSTICK_BUTTON_MAP = {
   0: 'SPIN',
