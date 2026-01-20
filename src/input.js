@@ -251,6 +251,10 @@ function startUsbEncoder() {
         dispatch({ type: 'ACTION', action })
     }
   })
+  joystick.error((error) => {
+    console.log('JOYSTICK ERROR', error)
+  })
+
 }
 
 // ============================
@@ -263,7 +267,7 @@ function shutdown() {
 
   console.log('[SYSTEM] SHUTDOWN')
 
-  try { gpioset(HOPPER_PAY_PIN, 0) } catch {}
+  // try { gpioset(HOPPER_PAY_PIN, 0) } catch {}
   try { joystick?.close?.() } catch {}
 
   setTimeout(() => process.exit(0), 50)
