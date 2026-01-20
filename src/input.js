@@ -225,36 +225,36 @@ function startUsbEncoder() {
   joystick = new Joystick(0, 3500, 350)
   console.log('[JOYSTICK] Ready')
 
-  joystick.on('button', e => {
-    if (shuttingDown || e.value !== 1) return
+  try {
+    joystick.on('button', e => {
+      if (shuttingDown || e.value !== 1) return
 
-    const action = JOYSTICK_BUTTON_MAP[e.number]
-    if (!action) return
+      const action = JOYSTICK_BUTTON_MAP[e.number]
+      if (!action) return
 
-    console.log('[JOYSTICK]', e.number, action)
+      console.log('[JOYSTICK]', e.number, action)
 
-    switch (action) {
-      case 'COIN':
-        handleDepositPulse()
-        break
+      switch (action) {
+        case 'COIN':
+          handleDepositPulse()
+          break
 
-      case 'WITHDRAW_COIN':
-        handleWithdrawPulse()
-        break
+        case 'WITHDRAW_COIN':
+          handleWithdrawPulse()
+          break
 
-      case 'WITHDRAW':
-        startHopper(50)
-        // dispatch({ type: 'WITHDRAW_REQUEST' })
-        break
+        case 'WITHDRAW':
+          startHopper(50)
+          // dispatch({ type: 'WITHDRAW_REQUEST' })
+          break
 
-      default:
-        dispatch({ type: 'ACTION', action })
-    }
-  })
-  joystick.error((error) => {
+        default:
+          dispatch({ type: 'ACTION', action })
+      }
+    })
+  } catch (error) {
     console.log('JOYSTICK ERROR', error)
-  })
-
+  }
 }
 
 // ============================
