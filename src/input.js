@@ -132,11 +132,13 @@ function finalizeDepositCoin() {
 function flushDepositBatch() {
   if (depositBatchCredits <= 0) return
 
-  console.log(`[DEPOSIT] BATCH FINAL credits=${depositBatchCredits}`)
+  const finalCredits = depositBatchCredits * 5
+
+  console.log(`[DEPOSIT] BATCH FINAL credits=${finalCredits}`)
 
   dispatch({
     type: 'COIN',
-    credits: depositBatchCredits,
+    credits: finalCredits,
   })
 
   depositBatchCredits = 0
