@@ -109,6 +109,11 @@ function handleDepositPulse() {
   depositLastPulseTime = now
   depositPulseCount++
 
+  dispatch({
+    type: 'COIN',
+    credits: 5,
+  })
+
   console.log(`[DEPOSIT] PULSE #${depositPulseCount} (+${gap}ms)`)
 
   if (depositIdleTimer) clearTimeout(depositIdleTimer)
@@ -136,10 +141,10 @@ function flushDepositBatch() {
 
   console.log(`[DEPOSIT] BATCH FINAL credits=${finalCredits}`)
 
-  dispatch({
-    type: 'COIN',
-    credits: finalCredits,
-  })
+  // dispatch({
+  //   type: 'COIN',
+  //   credits: finalCredits,
+  // })
 
   depositBatchCredits = 0
   depositBatchTimer = null
@@ -182,7 +187,7 @@ function handleWithdrawPulse() {
 
   dispatch({
     type: 'WITHDRAW_COMPLETE',
-    dispensed: 1,
+    dispensed: 5,
   })
   if (hopperDispensed >= hopperTarget) {
     stopHopper()
