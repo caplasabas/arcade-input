@@ -191,7 +191,7 @@ function handleWithdrawPulse() {
   console.log(`[HOPPER] DISPENSED ${hopperDispensed}/${hopperTarget}`)
 
   dispatch({
-    type: 'WITHDRAW_COIN',
+    type: 'WITHDRAW_DISPENSE',
     dispensed: 20,
   })
   if (hopperDispensed >= hopperTarget) {
