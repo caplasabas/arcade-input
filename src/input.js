@@ -220,12 +220,12 @@ function stopHopper() {
 // ============================
 
 function gpioset(pin, value) {
-  spawn('gpioset', [
-    GPIOCHIP,
-    `${pin}=${value}`,
-  ])
+  spawn(
+    'gpioset',
+    ['-c', GPIOCHIP, '-l', `${pin}=${value}`],
+    { stdio: 'ignore', detached: true }
+  )
 }
-
 // ============================
 // USB ENCODER
 // ============================
