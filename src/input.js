@@ -180,19 +180,19 @@ function startHopper(amount) {
   hopperTimeout = setTimeout(() => {
     console.error('[HOPPER] TIMEOUT — FORCED STOP')
     stopHopper()
-  }, Math.min((amount / 20) * 1200, HARD_MAX_MS))
+  }, Math.min((amount / 20) * 400, HARD_MAX_MS))
 }
 
 function handleWithdrawPulse() {
   if (!hopperActive) return
 
-  hopperDispensed += 5
+  hopperDispensed += 20
 
   console.log(`[HOPPER] DISPENSED ${hopperDispensed}/${hopperTarget}`)
 
   dispatch({
     type: 'WITHDRAW_COIN',
-    dispensed: 5,
+    dispensed: 20,
   })
   if (hopperDispensed >= hopperTarget) {
     stopHopper()
