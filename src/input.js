@@ -62,6 +62,7 @@ let hopperActive = false
 let hopperTarget = 0
 let hopperDispensed = 0
 let hopperTimeout = null
+let hopperGpioProcess = null
 
 // ============================
 // BOOT
@@ -163,6 +164,8 @@ function resetDepositCoin() {
 // HOPPER CONTROL
 // ============================
 
+const HARD_MAX_MS = 90_000
+
 function startHopper(amount) {
   if (shuttingDown || hopperActive || amount <=0 ) return
 
@@ -172,12 +175,12 @@ function startHopper(amount) {
 
   console.log('[HOPPER] START target=', amount)
 
-  gpioset(HOPPER_PAY_PIN, 1)
+  gpioOn(HOPPER_PAY_PIN)
 
   hopperTimeout = setTimeout(() => {
     console.error('[HOPPER] TIMEOUT — FORCED STOP')
     stopHopper()
-  }, (amount/20) * 1200)
+  }, Math.min((amount / 20) * 1200, HARD_MAX_MS))
 }
 
 function handleWithdrawPulse() {
@@ -199,7 +202,7 @@ function handleWithdrawPulse() {
 function stopHopper() {
   if (!hopperActive) return
   //
-  gpioset(HOPPER_PAY_PIN, 0)
+  gpioOff(HOPPER_PAY_PIN)
   hopperActive = false
 
   if (hopperTimeout) {
@@ -219,12 +222,22 @@ function stopHopper() {
 // GPIO HELPERS
 // ============================
 
-function gpioset(pin, value) {
-  spawn(
+
+function gpioOn(pin) {
+  if (hopperGpioProcess) return
+
+  hopperGpioProcess = spawn(
     'gpioset',
-    ['-c', GPIOCHIP, '-l', `${pin}=${value}`],
-    { stdio: 'ignore', detached: true }
+    ['-c', GPIOCHIP, '-l', `${pin}=1`],
+    { stdio: 'ignore' }
   )
+}
+
+function gpioOff(pin) {
+  if (!hopperGpioProcess) return
+
+  hopperGpioProcess.kill('SIGTERM')
+  hopperGpioProcess = null
 }
 // ============================
 // USB ENCODER
@@ -271,7 +284,7 @@ function shutdown() {
 
   console.log('[SYSTEM] SHUTDOWN')
 
-  // try { gpioset(HOPPER_PAY_PIN, 0) } catch {}
+  gpioOff(HOPPER_PAY_PIN)
   try { joystick?.close?.() } catch {}
 
   setTimeout(() => process.exit(0), 50)
