@@ -8,6 +8,8 @@
  * GPIO handled via libgpiod CLI (gpioset / gpiomon)
  */
 
+import http from 'http'
+
 import fetch from 'node-fetch'
 import Joystick from 'joystick'
 import { spawn } from 'child_process'
@@ -162,7 +164,7 @@ function resetDepositCoin() {
 // ============================
 
 function startHopper(amount) {
-  if (shuttingDown || hopperActive) return
+  if (shuttingDown || hopperActive || amount <=0 ) return
 
   hopperActive = true
   hopperTarget = amount
@@ -170,23 +172,23 @@ function startHopper(amount) {
 
   console.log('[HOPPER] START target=', amount)
 
-  // gpioset(HOPPER_PAY_PIN, 1)
+  gpioset(HOPPER_PAY_PIN, 1)
 
   hopperTimeout = setTimeout(() => {
     console.error('[HOPPER] TIMEOUT — FORCED STOP')
     stopHopper()
-  }, HOPPER_TIMEOUT_MS)
+  }, (amount/20) * 1200)
 }
 
 function handleWithdrawPulse() {
   if (!hopperActive) return
 
-  hopperDispensed++
+  hopperDispensed += 5
 
   console.log(`[HOPPER] DISPENSED ${hopperDispensed}/${hopperTarget}`)
 
   dispatch({
-    type: 'WITHDRAW_COMPLETE',
+    type: 'WITHDRAW_COIN',
     dispensed: 5,
   })
   if (hopperDispensed >= hopperTarget) {
@@ -197,7 +199,7 @@ function handleWithdrawPulse() {
 function stopHopper() {
   if (!hopperActive) return
   //
-  // gpioset(HOPPER_PAY_PIN, 0)
+  gpioset(HOPPER_PAY_PIN, 0)
   hopperActive = false
 
   if (hopperTimeout) {
@@ -207,10 +209,10 @@ function stopHopper() {
 
   console.log('[HOPPER] STOP dispensed=', hopperDispensed)
 
-  // dispatch({
-  //   type: 'WITHDRAW_COMPLETE',
-  //   dispensed: hopperDispensed,
-  // })
+  dispatch({
+    type: 'WITHDRAW_COMPLETE',
+    dispensed: hopperDispensed,
+  })
 }
 
 // ============================
@@ -250,11 +252,6 @@ function startUsbEncoder() {
           handleWithdrawPulse()
           break
 
-        case 'WITHDRAW':
-          startHopper(50)
-          // dispatch({ type: 'WITHDRAW_REQUEST' })
-          break
-
         default:
           dispatch({ type: 'ACTION', action })
       }
@@ -288,3 +285,35 @@ process.on('SIGTERM', shutdown)
 // ============================
 
 startUsbEncoder()
+
+const COMMAND_PORT = 5174
+
+http.createServer((req, res) => {
+    if (req.method !== 'POST') {
+      res.writeHead(405)
+      return res.end()
+    }
+
+    let body = ''
+    req.on('data', c => (body += c))
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body)
+
+        console.log('[CMD]', payload)
+
+        if (payload.type === 'WITHDRAW') {
+          startHopper(Number(payload.amount) || 0)
+        }
+
+        res.writeHead(200)
+        res.end('OK')
+      } catch (e) {
+        res.writeHead(400)
+        res.end('BAD JSON')
+      }
+    })
+  })
+  .listen(COMMAND_PORT, () => {
+    console.log(`[CMD] Listening on ${COMMAND_PORT}`)
+  })
