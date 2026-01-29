@@ -286,34 +286,52 @@ process.on('SIGTERM', shutdown)
 
 startUsbEncoder()
 
-const COMMAND_PORT = 5174
+const PORT = 5174
 
-http.createServer((req, res) => {
-    if (req.method !== 'POST') {
-      res.writeHead(405)
-      return res.end()
-    }
+const server = http.createServer((req, res) => {
+  // ---- CORS HEADERS (CRITICAL) ----
+  res.setHeader('Access-Control-Allow-Origin', 'http://localhost:5173')
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
 
-    let body = ''
-    req.on('data', c => (body += c))
-    req.on('end', () => {
-      try {
-        const payload = JSON.parse(body)
+  // Handle preflight
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204)
+    res.end()
+    return
+  }
 
-        console.log('[CMD]', payload)
+  if (req.method !== 'POST') {
+    res.writeHead(405)
+    res.end('Method Not Allowed')
+    return
+  }
 
-        if (payload.type === 'WITHDRAW') {
-          startHopper(Number(payload.amount) || 0)
-        }
+  let body = ''
 
-        res.writeHead(200)
-        res.end('OK')
-      } catch (e) {
-        res.writeHead(400)
-        res.end('BAD JSON')
+  req.on('data', chunk => {
+    body += chunk
+  })
+
+  req.on('end', () => {
+    try {
+      const payload = JSON.parse(body || '{}')
+      console.log('[INPUT HTTP]', payload)
+
+      if (payload.type === 'WITHDRAW') {
+        startHopper(payload.amount)
       }
-    })
+
+      res.writeHead(200)
+      res.end('OK')
+    } catch (err) {
+      console.error('[INPUT HTTP] Invalid JSON', err)
+      res.writeHead(400)
+      res.end('Invalid JSON')
+    }
   })
-  .listen(COMMAND_PORT, () => {
-    console.log(`[CMD] Listening on ${COMMAND_PORT}`)
-  })
+})
+
+server.listen(PORT, '127.0.0.1', () => {
+  console.log(`[INPUT HTTP] Listening on http://localhost:${PORT}`)
+})
