@@ -224,20 +224,11 @@ function stopHopper() {
 
 
 function gpioOn(pin) {
-  if (hopperGpioProcess) return
-
-  hopperGpioProcess = spawn(
-    'gpioset',
-    ['-c', GPIOCHIP, '-l', `${pin}=1`],
-    { stdio: 'ignore' }
-  )
+  spawn('gpioset', ['-c', GPIOCHIP, `${pin}=0`], { stdio: 'ignore' })
 }
 
 function gpioOff(pin) {
-  if (!hopperGpioProcess) return
-
-  hopperGpioProcess.kill('SIGTERM')
-  hopperGpioProcess = null
+  spawn('gpioset', ['-c', GPIOCHIP, `${pin}=1`], { stdio: 'ignore' })
 }
 // ============================
 // USB ENCODER
