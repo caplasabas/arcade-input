@@ -180,7 +180,7 @@ function startHopper(amount) {
   hopperTimeout = setTimeout(() => {
     console.error('[HOPPER] TIMEOUT — FORCED STOP')
     stopHopper()
-  }, Math.min((amount / 20) * 1200, HARD_MAX_MS))
+  }, Math.min((amount / 20) * 600, HARD_MAX_MS))
 }
 
 function handleWithdrawPulse() {
