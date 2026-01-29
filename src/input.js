@@ -222,29 +222,21 @@ function stopHopper() {
 // GPIO HELPERS
 // ============================
 
-
 let hopperCtl = null
 
 function gpioOn(pin) {
   if (hopperCtl) return
-  console.log('[GPIO] ON pin', pin)
 
-  hopperCtl = spawn(
-    'gpioset',
-    ['-c', GPIOCHIP, '-l', `${pin}=0`], // active-LOW ON
-    { stdio: 'ignore' }
-  )
+  hopperCtl = spawn('gpioset', ['-c', GPIOCHIP, '-l', `${pin}=1`], { stdio: 'ignore' })
 }
 
 function gpioOff(pin) {
-  if (!hopperCtl) return
-  console.log('[GPIO] OFF pin', pin)
+  if (hopperCtl) {
+    hopperCtl.kill('SIGTERM')
+    hopperCtl = null
+  }
 
-  hopperCtl.kill('SIGTERM')
-  hopperCtl = null
-
-  // Explicit OFF after release (belt + suspenders)
-  spawn('gpioset', ['-c', GPIOCHIP, `${pin}=1`], { stdio: 'ignore' })
+  spawn('gpioset', ['-c', GPIOCHIP, '-l', `${pin}=0`], { stdio: 'ignore' })
 }
 // ============================
 // USB ENCODER
