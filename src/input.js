@@ -223,11 +223,27 @@ function stopHopper() {
 // ============================
 
 
+let hopperCtl = null
+
 function gpioOn(pin) {
-  spawn('gpioset', ['-c', GPIOCHIP, `${pin}=0`], { stdio: 'ignore' })
+  if (hopperCtl) return
+  console.log('[GPIO] ON pin', pin)
+
+  hopperCtl = spawn(
+    'gpioset',
+    ['-c', GPIOCHIP, '-l', `${pin}=0`], // active-LOW ON
+    { stdio: 'ignore' }
+  )
 }
 
 function gpioOff(pin) {
+  if (!hopperCtl) return
+  console.log('[GPIO] OFF pin', pin)
+
+  hopperCtl.kill('SIGTERM')
+  hopperCtl = null
+
+  // Explicit OFF after release (belt + suspenders)
   spawn('gpioset', ['-c', GPIOCHIP, `${pin}=1`], { stdio: 'ignore' })
 }
 // ============================
