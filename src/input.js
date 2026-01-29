@@ -225,7 +225,10 @@ function stopHopper() {
 let hopperCtl = null
 
 function gpioOn(pin) {
-  if (hopperCtl) return
+  if (hopperCtl) {
+    hopperCtl.kill('SIGTERM')
+    hopperCtl = null
+  }
 
   hopperCtl = spawn('gpioset', ['-c', GPIOCHIP, '-l', `${pin}=1`], { stdio: 'ignore' })
 }
@@ -236,7 +239,7 @@ function gpioOff(pin) {
     hopperCtl = null
   }
 
-  spawn('gpioset', ['-c', GPIOCHIP, '-l', `${pin}=0`], { stdio: 'ignore' })
+  hopperCtl= spawn('gpioset', ['-c', GPIOCHIP, '-l', `${pin}=0`], { stdio: 'ignore' })
 }
 // ============================
 // USB ENCODER
