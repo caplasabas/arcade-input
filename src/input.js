@@ -34,8 +34,9 @@ const JOYSTICK_BUTTON_MAP = {
   5: 'WITHDRAW',       // UI request
   6: 'WITHDRAW_COIN',  // hopper coin slot pulses
   7: 'TURBO',
-  8: 'MENU',
-  9: 'START',
+  8: 'BUY',
+  9: 'MENU',
+  10: 'START',
 }
 
 // Coin timing (measured FAST mode)
