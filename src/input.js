@@ -1,4 +1,4 @@
-w/**
+/**
  * Arcade Input Service (Raspberry Pi)
  * ----------------------------------
  * - USB arcade encoder (joystick)
